@@ -83,14 +83,19 @@
 
         <!-- Message Input -->
         <div class="bg-white/60 backdrop-blur-md border-t border-white/40 p-4">
-            <div class="flex items-center space-x-4">
-                <div class="flex-1 relative">
-                    <input type="text" id="messageInput" placeholder="Type your message..." 
-                           class="w-full px-4 py-3 bg-white border border-blue-300 shadow focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 rounded-lg text-gray-800 placeholder-gray-400 transition-all">
+            <div class="flex flex-col space-y-2">
+                <div class="flex items-center space-x-4">
+                    <div class="flex-1 relative">
+                        <input type="text" id="messageInput" placeholder="Type your message..." 
+                               class="w-full px-4 py-3 bg-white border border-blue-300 shadow focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 rounded-lg text-gray-800 placeholder-gray-400 transition-all"
+                               autocomplete="off">
+                    </div>
+                    <button id="sendBtn" class="bg-gradient-to-r from-blue-400 to-cyan-300 text-white px-6 py-3 rounded-lg font-semibold hover:from-blue-500 hover:to-cyan-400 transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
                 </div>
-                <button id="sendBtn" class="bg-gradient-to-r from-blue-400 to-cyan-300 text-white px-6 py-3 rounded-lg font-semibold hover:from-blue-500 hover:to-cyan-400 transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <i class="fas fa-paper-plane"></i>
-                </button>
+                <!-- Link Preview Area -->
+                <div id="linkPreview" class="hidden mt-2"></div>
             </div>
         </div>
     </div>
@@ -191,6 +196,82 @@
             });
         }
 
+        // --- Link Preview Support ---
+        let currentPreview = null;
+        const urlRegex = /(https?:\/\/[\w\-\.\/?#&=;%+~:@!$'()*\[\],]+)/i;
+        const youtubeRegex = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{11})/i;
+
+        async function fetchLinkPreview(url) {
+            // Check for YouTube link
+            const ytMatch = url.match(youtubeRegex);
+            if (ytMatch) {
+                try {
+                    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+                    const resp = await fetch(oembedUrl);
+                    if (!resp.ok) throw new Error('No preview');
+                    const data = await resp.json();
+                    return {
+                        type: 'youtube',
+                        url: url,
+                        title: data.title,
+                        description: data.author_name ? `by ${data.author_name}` : '',
+                        image: data.thumbnail_url,
+                        videoId: ytMatch[1]
+                    };
+                } catch (e) {
+                    // fallback to microlink
+                }
+            }
+            // Fallback to microlink.io
+            try {
+                const resp = await fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`);
+                const data = await resp.json();
+                if (data.status === 'success') {
+                    return {
+                        type: 'generic',
+                        ...data.data
+                    };
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        function renderLinkPreview(preview, container) {
+            if (!preview) { container.innerHTML = ''; return; }
+            if (preview.type === 'youtube') {
+                container.innerHTML = `
+                    <a href="${preview.url}" target="_blank" class="block rounded-xl border border-blue-100 bg-white/80 shadow p-3 hover:bg-blue-50 transition-all relative overflow-hidden">
+                        <div class="flex items-center space-x-3">
+                            <div class="relative">
+                                <img src="${preview.image}" class="w-24 h-16 object-cover rounded-lg flex-shrink-0" alt="YouTube Thumbnail">
+                                <span class="absolute inset-0 flex items-center justify-center">
+                                    <svg class="w-10 h-10 text-white/90" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                </span>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="font-semibold text-gray-800 truncate">${preview.title}</div>
+                                <div class="text-gray-500 text-sm truncate">${preview.description}</div>
+                                <div class="text-red-500 text-xs mt-1">youtube.com</div>
+                            </div>
+                        </div>
+                    </a>
+                `;
+            } else {
+                container.innerHTML = `
+                    <a href="${preview.url}" target="_blank" class="block rounded-xl border border-blue-100 bg-white/80 shadow p-3 hover:bg-blue-50 transition-all">
+                        <div class="flex items-center space-x-3">
+                            ${preview.image ? `<img src="${preview.image.url || preview.image}" class="w-16 h-16 object-cover rounded-lg flex-shrink-0" alt="">` : ''}
+                            <div class="flex-1 min-w-0">
+                                <div class="font-semibold text-gray-800 truncate">${preview.title || preview.url}</div>
+                                <div class="text-gray-500 text-sm truncate">${preview.description || ''}</div>
+                                <div class="text-blue-400 text-xs mt-1">${preview.url.replace(/^https?:\/\//, '')}</div>
+                            </div>
+                        </div>
+                    </a>
+                `;
+            }
+        }
+
         // Display a message in the chat
         function displayMessage(messageData) {
             const messagesContainer = document.getElementById('messagesContainer');
@@ -199,6 +280,41 @@
             messageElement.className = `message-bubble flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`;
             const time = messageData.timestamp && messageData.timestamp.toDate ? new Date(messageData.timestamp.toDate()) : new Date();
             const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            let previewHtml = '';
+            if (messageData.linkPreview && messageData.linkPreview.url) {
+                if (messageData.linkPreview.type === 'youtube') {
+                    previewHtml = `
+                        <a href="${messageData.linkPreview.url}" target="_blank" class="block rounded-xl border border-blue-100 bg-white/80 shadow p-3 hover:bg-blue-50 transition-all mt-2 relative overflow-hidden">
+                            <div class="flex items-center space-x-3">
+                                <div class="relative">
+                                    <img src="${messageData.linkPreview.image}" class="w-24 h-16 object-cover rounded-lg flex-shrink-0" alt="YouTube Thumbnail">
+                                    <span class="absolute inset-0 flex items-center justify-center">
+                                        <svg class="w-10 h-10 text-white/90" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                    </span>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-semibold text-gray-800 truncate">${messageData.linkPreview.title}</div>
+                                    <div class="text-gray-500 text-sm truncate">${messageData.linkPreview.description}</div>
+                                    <div class="text-red-500 text-xs mt-1">youtube.com</div>
+                                </div>
+                            </div>
+                        </a>
+                    `;
+                } else {
+                    previewHtml = `
+                        <a href="${messageData.linkPreview.url}" target="_blank" class="block rounded-xl border border-blue-100 bg-white/80 shadow p-3 hover:bg-blue-50 transition-all mt-2">
+                            <div class="flex items-center space-x-3">
+                                ${messageData.linkPreview.image ? `<img src="${messageData.linkPreview.image}" class="w-16 h-16 object-cover rounded-lg flex-shrink-0" alt="">` : ''}
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-semibold text-gray-800 truncate">${messageData.linkPreview.title || messageData.linkPreview.url}</div>
+                                    <div class="text-gray-500 text-sm truncate">${messageData.linkPreview.description || ''}</div>
+                                    <div class="text-blue-400 text-xs mt-1">${messageData.linkPreview.url.replace(/^https?:\/\//, '')}</div>
+                                </div>
+                            </div>
+                        </a>
+                    `;
+                }
+            }
             messageElement.innerHTML = `
                 <div class="max-w-xs lg:max-w-md">
                     <div class="flex items-end space-x-2 ${isOwnMessage ? 'flex-row-reverse space-x-reverse' : ''}">
@@ -217,6 +333,7 @@
                                 : 'bg-gray-100 border border-gray-200'} shadow-sm rounded-2xl px-4 py-2 text-gray-800 break-words">
                                 ${escapeHtml(messageData.message)}
                             </div>
+                            ${previewHtml}
                         </div>
                     </div>
                 </div>
@@ -232,9 +349,20 @@
                     message: message.trim(),
                     userId: currentUserId,
                     userName: currentUserName,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    linkPreview: currentPreview ? {
+                        type: currentPreview.type,
+                        url: currentPreview.url,
+                        title: currentPreview.title,
+                        description: currentPreview.description,
+                        image: currentPreview.image && currentPreview.image.url ? currentPreview.image.url : currentPreview.image || null
+                    } : null
                 });
                 updateTypingStatus(false);
+                currentPreview = null;
+                const linkPreview = document.getElementById('linkPreview');
+                linkPreview.classList.add('hidden');
+                linkPreview.innerHTML = '';
             } catch (error) {
                 showNotification('Failed to send message: ' + error.message, 'error');
             }
@@ -340,6 +468,29 @@
             setupEventListeners();
             setupPresenceHeartbeat();
             setupPresenceListener();
+            const messageInput = document.getElementById('messageInput');
+            const linkPreview = document.getElementById('linkPreview');
+            messageInput.addEventListener('input', async () => {
+                // Link preview logic
+                const match = messageInput.value.match(urlRegex);
+                if (match) {
+                    const url = match[0];
+                    linkPreview.classList.remove('hidden');
+                    linkPreview.innerHTML = '<div class="text-gray-400 text-sm">Loading preview...</div>';
+                    const preview = await fetchLinkPreview(url);
+                    if (preview) {
+                        currentPreview = preview;
+                        renderLinkPreview(preview, linkPreview);
+                    } else {
+                        currentPreview = null;
+                        linkPreview.innerHTML = '<div class="text-gray-400 text-sm">No preview available.</div>';
+                    }
+                } else {
+                    currentPreview = null;
+                    linkPreview.classList.add('hidden');
+                    linkPreview.innerHTML = '';
+                }
+            });
         });
     </script>
 </body>
