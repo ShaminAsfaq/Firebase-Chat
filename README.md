@@ -127,8 +127,6 @@ service cloud.firestore {
 ```
 Firebase-Chat/
 ├── chat.html          # Main HTML file with UI
-├── firebase-config.js # Firebase configuration and auth
-├── chat.js           # Chat functionality and real-time features
 └── README.md         # This file
 ```
 
